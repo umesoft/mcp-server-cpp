@@ -81,7 +81,16 @@ void McpServer::cbEvHander(void* connection, int event_code, void* event_data)
 	mg_connection* conn = (mg_connection*)connection;
 	McpServer* self = (McpServer*)conn->fn_data;
 
-	if (event_code == MG_EV_HTTP_MSG)
+	if (event_code == MG_EV_ACCEPT)
+	{
+		struct mg_tls_opts opts = 
+		{ 
+			.cert = mg_file_read(&mg_fs_posix, "cert.pem"),
+			.key = mg_file_read(&mg_fs_posix, "key.pem")
+		};
+		mg_tls_init(conn, &opts);
+	}
+	else if (event_code == MG_EV_HTTP_MSG)
 	{
 		struct mg_http_message* hm = (struct mg_http_message*)event_data;
 		if (mg_match(hm->uri, mg_str(self->m_entry_point.data()), NULL)) 

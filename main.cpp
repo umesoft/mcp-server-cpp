@@ -48,7 +48,7 @@ int main()
 	);
 
 	server.Run(
-		"http://localhost:8000/mcp",
+		"https://localhost:8000/mcp",
 		10 * 60 * 1000
 	);
 
