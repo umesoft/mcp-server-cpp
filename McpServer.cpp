@@ -15,9 +15,13 @@
  *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#define NOMINMAX
+
 #include "McpServer.h"
 #include "mongoose.h"
 #include "platform.h"
+
+#include "jwt-cpp/jwt.h"
 
 typedef void (*mg_timer_handler_t)(void*);
 typedef void (*mg_rpc_handler_t)(struct mg_rpc_req*);
@@ -49,7 +53,7 @@ void mg_json_rpc2_verr(struct mg_rpc_req* r, int code, const char* fmt, va_list*
 	mg_xprintf(r->pfn, r->pfn_data, "%m:{%m:%d,%m:", mg_print_esc, 0, "error",
 		mg_print_esc, 0, "code", code, mg_print_esc, 0, "message");
 	mg_vxprintf(r->pfn, r->pfn_data, fmt == NULL ? "null" : fmt, ap);
-	mg_xprintf(r->pfn, r->pfn_data, "}}\r\n");
+	mg_xprintf(r->pfn, r->pfn_data, "}}\n\n");
 }
 
 static void mg_json_rpc2_err(struct mg_rpc_req* r, int code, const char* fmt, ...) {
@@ -61,6 +65,12 @@ static void mg_json_rpc2_err(struct mg_rpc_req* r, int code, const char* fmt, ..
 
 McpServer::McpServer(const char* server_name)
 	: m_server_name(server_name)
+	, m_authorization(false)
+	, m_authorization_servers()
+	, m_scopes_supported()
+	, m_url()
+	, m_host()
+	, m_entry_point()
 	, m_sessions()
 	, m_rpc_head(nullptr)
 {
@@ -74,9 +84,12 @@ void McpServer::cbEvHander(void* connection, int event_code, void* event_data)
 	if (event_code == MG_EV_HTTP_MSG)
 	{
 		struct mg_http_message* hm = (struct mg_http_message*)event_data;
-		if (mg_match(hm->uri, mg_str("/mcp"), NULL)) {
+		if (mg_match(hm->uri, mg_str(self->m_entry_point.data()), NULL)) 
+		{
+			std::string auth_token = "";
 			std::string session_id = "";
 
+			mg_str authorization = mg_str_s("authorization");
 			mg_str mcp_session_id = mg_str_s("mcp-session-id");
 			for (int i = 0; i < MG_MAX_HTTP_HEADERS; i++)
 			{
@@ -84,10 +97,13 @@ void McpServer::cbEvHander(void* connection, int event_code, void* event_data)
 				{
 					break;
 				}
-				if (mg_strcasecmp(hm->headers[i].name, mcp_session_id) == 0)
+				if (mg_strcasecmp(hm->headers[i].name, authorization) == 0)
+				{
+					auth_token.assign(hm->headers[i].value.buf, hm->headers[i].value.len);
+				}
+				else if (mg_strcasecmp(hm->headers[i].name, mcp_session_id) == 0)
 				{
 					session_id.assign(hm->headers[i].value.buf, hm->headers[i].value.len);
-					break;
 				}
 			}
 
@@ -104,6 +120,44 @@ void McpServer::cbEvHander(void* connection, int event_code, void* event_data)
 			}
 			else if (mg_strcasecmp(hm->method, mg_str("POST")) == 0)
 			{
+				if (self->m_authorization)
+				{
+					bool authorization_chk = false;
+
+					if (!auth_token.empty())
+					{
+						std::string::size_type aPos = auth_token.find_first_of("Bearer ");
+						if (aPos != std::string::npos)
+						{
+							std::string token = auth_token.substr(aPos + 7);
+							auto decoded = jwt::decode(token);
+							auto payload = decoded.get_payload_json();
+
+							std::string aud_value = payload["aud"].get<std::string>();
+							if (aud_value == self->m_url)
+							{
+								authorization_chk = true;
+							}
+						}
+					}
+
+					if (!authorization_chk)
+					{
+						std::string authenticate_header = "WWW-Authenticate: Bearer resource_metadata=\"";
+						authenticate_header += self->m_host;
+						authenticate_header += "/.well-known/oauth-protected-resource";
+						authenticate_header += self->m_entry_point;
+						authenticate_header += "\"\r\n";
+						mg_http_reply(
+							conn,
+							401,
+							authenticate_header.c_str(),
+							""
+						);
+						return;
+					}
+				}
+
 				char* method = mg_json_get_str(hm->body, "$.method");
 				if (method != nullptr)
 				{
@@ -111,7 +165,7 @@ void McpServer::cbEvHander(void* connection, int event_code, void* event_data)
 					{
 						session_id = CreateSessionId();
 					}
-					else 
+					else
 					{
 						if (!self->IsEnableSessionId(session_id))
 						{
@@ -157,6 +211,41 @@ void McpServer::cbEvHander(void* connection, int event_code, void* event_data)
 					mg_iobuf_free(&io);
 				}
 			}
+		}
+		else if (self->m_authorization && mg_strcmp(hm->uri, mg_str(("/.well-known/oauth-protected-resource" + self->m_entry_point).c_str())) == 0)
+		{
+			if (mg_strcasecmp(hm->method, mg_str("GET")) == 0)
+			{
+				mg_http_reply(
+					conn,
+					200,
+					"Access-Control-Allow-Origin: *\r\nContent-Type: application/json\r\n",
+					"{"
+					"\"resource\": \"%s\","
+					"\"authorization_servers\": [%s],"
+					"\"scopes_supported\": [%s],"
+					"\"bearer_methods_supported\": [\"header\"]"
+					"}",
+					self->m_url.c_str(),
+					self->m_authorization_servers.c_str(),
+					self->m_scopes_supported.c_str()
+				);
+			}
+			else if (mg_strcasecmp(hm->method, mg_str("OPTIONS")) == 0)
+			{
+				mg_http_reply(
+					conn,
+					204,
+					"Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET\r\nAccess-Control-Allow-Headers: mcp-protocol-version\r\n",
+					""
+				);
+			}
+			return;
+		}
+		else
+		{
+			mg_http_reply(conn, 405, "", "");
+			return;
 		}
 	}
 }
@@ -340,6 +429,21 @@ void McpServer::cbToolsCall(void* rpc_req)
 	);
 }
 
+void McpServer::SetAuthorization(const char* authorization_servers, const char* scopes_supported)
+{
+	m_authorization_servers = authorization_servers;
+	m_scopes_supported = scopes_supported;
+
+	if (!m_authorization_servers.empty() && !m_scopes_supported.empty())
+	{
+		m_authorization = true;
+	}
+	else
+	{
+		m_authorization = false;
+	}
+}
+
 void McpServer::AddTool(
 	const char* tool_name, 
 	const char* tool_description, 
@@ -355,8 +459,13 @@ void McpServer::AddTool(
 	m_tools[tool_name] = tool;
 }
 
-void McpServer::Run(const char* url, uint64_t session_timeout)
+bool McpServer::Run(const char* url, uint64_t session_timeout)
 {
+	if (!UpdateUrlPath(url))
+	{
+		return false;
+	}
+
 	struct mg_rpc* s_rpc_head = nullptr;
 
 	struct mg_mgr mgr;
@@ -374,7 +483,7 @@ void McpServer::Run(const char* url, uint64_t session_timeout)
 
 	mg_http_listen(
 		&mgr, 
-		url,
+		m_host.c_str(),
 		(mg_event_handler_t)cbEvHander,
 		this
 	);
@@ -388,4 +497,31 @@ void McpServer::Run(const char* url, uint64_t session_timeout)
 	m_rpc_head = nullptr;
 
 	mg_mgr_free(&mgr);
+}
+
+bool McpServer::UpdateUrlPath(const char* url)
+{
+	m_url = url;
+
+	std::string::size_type scheme_pos = m_url.find("://");
+	if (scheme_pos == std::string::npos)
+	{
+		return false;
+	}
+
+	std::string withoutScheme = m_url.substr(scheme_pos + 3);
+
+	std::string::size_type pos = withoutScheme.find('/');
+	if (pos == std::string::npos) 
+	{
+		m_host = m_url;
+		m_entry_point = "/";
+	}
+	else 
+	{
+		m_host = m_url.substr(0, scheme_pos + 3 + pos);
+		m_entry_point = withoutScheme.substr(pos);
+	}
+
+	return true;
 }

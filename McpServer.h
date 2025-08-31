@@ -17,7 +17,7 @@
 
 #pragma once
 
-# include <functional>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -40,6 +40,11 @@ public:
 		std::string text;
 	};
 
+	void SetAuthorization(
+		const char* authorization_servers,
+		const char* scopes_supported
+	);
+
 	void AddTool(
 		const char* tool_name, 
 		const char* tool_description, 
@@ -47,10 +52,18 @@ public:
 		std::function <std::vector<McpContent>(const std::map<std::string, std::string>& args)> callback
 		);
 
-	void Run(const char* url, uint64_t session_timeout);
+	bool Run(const char* url, uint64_t session_timeout);
 
 private:
 	std::string m_server_name;
+	bool m_authorization;
+	std::string m_authorization_servers;
+	std::string m_scopes_supported;
+	std::string m_url;
+	std::string m_host;
+	std::string m_entry_point;
+
+	bool UpdateUrlPath(const char* url);
 
 	struct McpTool {
 		std::string name;

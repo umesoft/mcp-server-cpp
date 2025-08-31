@@ -21,6 +21,11 @@ int main()
 {
 	McpServer server("MCP Test");
 
+	server.SetAuthorization(
+		"\"https://***tenant name***.us.auth0.com\"",
+		"\"***api permission***\""
+	);
+
 	std::vector<McpServer::McpProperty> properties = {
 		{"location", McpServer::PROPERTY_STRING, true}
 	};
@@ -43,7 +48,7 @@ int main()
 	);
 
 	server.Run(
-		"http://127.0.0.1:8000",
+		"http://localhost:8000/mcp",
 		10 * 60 * 1000
 	);
 
