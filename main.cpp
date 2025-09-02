@@ -26,23 +26,44 @@ int main()
 		"\"***api permission***\""
 	);
 
-	std::vector<McpServer::McpProperty> properties = {
-		{"location", McpServer::PROPERTY_STRING, true}
-	};
 	server.AddTool(
 		"get_channels",
 		"Returns a list of available TV channels.",
-		properties,
-		[](const std::map<std::string, std::string>& args) -> std::vector<McpServer::McpContent>{
+		std::vector<McpServer::McpProperty> {
+			{ "location", McpServer::PROPERTY_STRING, "location of TV", true }
+		},
+		std::vector<McpServer::McpProperty> {
+			{ "channel_no", McpServer::PROPERTY_STRING, "channel no", true },
+			{ "service_name", McpServer::PROPERTY_STRING, "service name", true }
+		},
+		[](const std::map<std::string, std::string>& args) -> std::vector<McpServer::McpContent> {
 			std::vector<McpServer::McpContent> contents;
-			contents.push_back({
-				.type = "text",
-				.text = "NHK G"
+
+			McpServer::McpContent content{
+				.property_type = McpServer::PROPERTY_OBJECT,
+				.value = ""
+			};
+
+			content.properties.push_back({
+				.property_name = "channel_no",
+				.value = "011"
 				});
-			contents.push_back({
-				.type = "text",
-				.text = "ETV"
+			content.properties.push_back({
+				.property_name = "service_name",
+				.value = "NHK G"
 				});
+			contents.push_back(content);
+
+			content.properties.push_back({
+				.property_name = "channel_no",
+				.value = "021"
+				});
+			content.properties.push_back({
+				.property_name = "service_name",
+				.value = "ETV"
+				});
+			contents.push_back(content);
+
 			return contents;
 		}
 	);

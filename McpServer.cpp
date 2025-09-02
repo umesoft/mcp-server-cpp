@@ -337,36 +337,95 @@ void McpServer::cbToolsList(void* rpc_req)
 		}
 		tools_json += "{"
 			"\"name\": \"" + tool.name + "\","
-			"\"description\": \"" + tool.description + "\","
-			"\"inputSchema\": {"
-			"\"type\": \"object\","
-			"\"properties\": {";
+			"\"description\": \"" + tool.description + "\"";
 
-		std::string required_properties = "";
+		if (tool.input_schema.size() > 0)
+		{
+			tools_json += ",\"inputSchema\": {"
+				"\"type\": \"object\","
+				"\"properties\": {";
 
-		for (size_t i = 0; i < tool.input_schema.size(); i++) {
-			if (i > 0) {
-				tools_json += ",";
-			}
-			const auto& prop = tool.input_schema[i];
-			tools_json += "\"" + prop.property_name + "\": {"
-				"\"type\": \"" + GetPropertyType(prop.property_type) + "\"}";
+			std::string required_properties = "";
 
-			if (prop.required) {
-				if (!required_properties.empty()) {
-					required_properties += ",";
+			int i = 0;
+			for (auto it = tool.input_schema.begin(); it != tool.input_schema.end(); it++)
+			{
+				if (i > 0)
+				{
+					tools_json += ",";
 				}
-				required_properties += "\"" + prop.property_name + "\"";
+				const auto& prop = it->second;
+				tools_json += "\"" + prop.property_name + "\": {"
+					"\"type\": \"" + GetPropertyType(prop.property_type) + 
+					"\",\"description\": \"" + prop.description + "\"}";
+
+				if (prop.required) 
+				{
+					if (!required_properties.empty())
+					{
+						required_properties += ",";
+					}
+					required_properties += "\"" + prop.property_name + "\"";
+				}
+				i++;
 			}
+
+			tools_json += "}";
+
+			if (!required_properties.empty()) {
+				tools_json += ", \"required\": [" + required_properties + "]";
+			}
+
+			tools_json += "}";
+		}
+
+		if (tool.output_schema.size() > 0)
+		{
+			tools_json += ",\"outputSchema\": {"
+				"\"type\": \"object\","
+				"\"properties\": {"
+					"\"content\": {"
+						"\"type\": \"array\","
+						"\"items\": {"
+							"\"type\": \"object\","
+							"\"properties\": {";
+
+			std::string required_properties = "";
+
+			int i = 0;
+			for (auto it = tool.output_schema.begin(); it != tool.output_schema.end(); it++)
+			{
+				if (i > 0)
+				{
+					tools_json += ",";
+				}
+				const auto& prop = it->second;
+				tools_json += "\"" + prop.property_name + "\": {"
+					"\"type\": \"" + GetPropertyType(prop.property_type) +
+					"\",\"description\": \"" + prop.description + "\"}";
+
+				if (prop.required)
+				{
+					if (!required_properties.empty())
+					{
+						required_properties += ",";
+					}
+					required_properties += "\"" + prop.property_name + "\"";
+				}
+				i++;
+			}
+
+			tools_json += "}";
+
+			if (!required_properties.empty())
+			{
+				tools_json += ", \"required\": [" + required_properties + "]";
+			}
+
+			tools_json += "}}},\"required\": [\"content\"]}";
 		}
 
 		tools_json += "}";
-		
-		if (!required_properties.empty()) {
-			tools_json += ", \"required\": [" + required_properties + "]";
-		}
-
-		tools_json += "}}";
 	}
 
 	mg_json_rpc2_ok(
@@ -379,10 +438,37 @@ void McpServer::cbToolsList(void* rpc_req)
 std::string McpServer::GetPropertyType(PropertyType type)
 {
 	switch (type) {
+	case PROPERTY_NUMBER:
+		return "number";
 	case PROPERTY_STRING:
 		return "string";
 	default:
 		return "unknown";
+	}
+}
+
+std::string McpServer::GetPropertyValue(const McpTool& tool, McpPropertyValue value, bool escape)
+{
+	auto it = tool.output_schema.find(value.property_name);
+	if (it == tool.output_schema.end())
+	{
+		return "";
+	}
+
+	switch (it->second.property_type) {
+	case PROPERTY_NUMBER:
+		return value.value;
+	case PROPERTY_STRING:
+		if (escape)
+		{
+			return "\\\"" + value.value + "\\\"";
+		}
+		else
+		{
+			return "\"" + value.value + "\"";
+		}
+	default:
+		return "";
 	}
 }
 
@@ -408,7 +494,7 @@ void McpServer::cbToolsCall(void* rpc_req)
 	McpTool& tool = it->second;
 	for (auto it2 = tool.input_schema.begin(); it2 != tool.input_schema.end(); it2++)
 	{
-		const auto& prop = *it2;
+		const auto& prop = it2->second;
 		std::string property_name = "$.params.arguments." + prop.property_name;
 		char* value = mg_json_get_str(
 			r->frame,
@@ -419,23 +505,60 @@ void McpServer::cbToolsCall(void* rpc_req)
 
 	std::vector<McpContent> contents = tool.callback(arguments);
 	std::string content_json = "";
+	std::string structured_content_json = "";
 
-	for (size_t i = 0; i < contents.size(); i++)
+	if (tool.output_schema.size() == 0)
 	{
-		if (i > 0) {
-			content_json += ",";
+		for (size_t i = 0; i < contents.size(); i++)
+		{
+			if (i > 0) {
+				content_json += ",";
+			}
+			content_json += "{"
+				"\"type\": \"" + GetPropertyType(contents[i].property_type) + "\","
+				"\"text\": \"" + contents[i].value + "\""
+				"}";
 		}
-		content_json += "{"
-			"\"type\": \"" + contents[i].type + "\","
-			"\"text\": \"" + contents[i].text + "\""
-			"}";
-	}
 
-	mg_json_rpc2_ok(
-		r,
-		"{""\"content\": [%s]}",
-		content_json.c_str()
-	);
+		mg_json_rpc2_ok(
+			r,
+			"{\"content\": [%s]}",
+			content_json.c_str()
+		);
+	}
+	else
+	{
+		for (size_t i = 0; i < contents.size(); i++)
+		{
+			if (i > 0) 
+			{
+				content_json += ",";
+				structured_content_json += ",";
+			}
+			content_json += "{\"type\": \"text\",\"text\": \"{";
+			structured_content_json += "{";
+			for (size_t j = 0; j < contents[i].properties.size(); j++)
+			{
+				if (j > 0) 
+				{
+					content_json += ",";
+					structured_content_json += ",";
+				}
+				content_json += "\\\"" + contents[i].properties[j].property_name + "\\\": " + self->GetPropertyValue(tool, contents[i].properties[j], true);
+				structured_content_json += "\"" + contents[i].properties[j].property_name + "\": " + self->GetPropertyValue(tool, contents[i].properties[j], false);
+			}
+			content_json += "}\"";
+			content_json += "}";
+			structured_content_json += "}";
+		}
+
+		mg_json_rpc2_ok(
+			r,
+			"{\"content\": [%s], \"structuredContent\": {\"content\": [%s]}}",
+			content_json.c_str(),
+			structured_content_json.c_str()
+		);
+	}
 }
 
 void McpServer::SetAuthorization(const char* authorization_servers, const char* scopes_supported)
@@ -456,14 +579,22 @@ void McpServer::SetAuthorization(const char* authorization_servers, const char* 
 void McpServer::AddTool(
 	const char* tool_name, 
 	const char* tool_description, 
-	const std::vector<McpProperty>& properties,
+	const std::vector<McpProperty>& input_schema,
+	const std::vector<McpProperty>& output_schema,
 	std::function <std::vector<McpContent>(const std::map<std::string, std::string>& args)> callback
 )
 {
 	McpTool tool;
 	tool.name = tool_name;
 	tool.description = tool_description;
-	tool.input_schema = properties;
+	for (auto it = input_schema.begin(); it != input_schema.end(); it++)
+	{
+		tool.input_schema[it->property_name] = *it;
+	}
+	for (auto it = output_schema.begin(); it != output_schema.end(); it++)
+	{
+		tool.output_schema[it->property_name] = *it;
+	}
 	tool.callback = callback;
 	m_tools[tool_name] = tool;
 }

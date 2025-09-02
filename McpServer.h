@@ -28,16 +28,24 @@ public:
 	McpServer(const char* server_name);
 
 	enum PropertyType {
-		PROPERTY_STRING = 1,
+		PROPERTY_NUMBER = 1,
+		PROPERTY_STRING,
+		PROPERTY_OBJECT
 	};
 	struct McpProperty {
 		std::string property_name;
 		PropertyType property_type;
+		std::string description;
 		bool required;
 	};
+	struct McpPropertyValue {
+		std::string property_name;
+		std::string value;
+	};
 	struct McpContent {
-		std::string type;
-		std::string text;
+		PropertyType property_type;
+		std::string value;
+		std::vector<McpPropertyValue> properties;
 	};
 
 	void SetAuthorization(
@@ -48,7 +56,8 @@ public:
 	void AddTool(
 		const char* tool_name, 
 		const char* tool_description, 
-		const std::vector<McpProperty>& properties,
+		const std::vector<McpProperty>& input_schema,
+		const std::vector<McpProperty>& output_schema,
 		std::function <std::vector<McpContent>(const std::map<std::string, std::string>& args)> callback
 		);
 
@@ -68,12 +77,14 @@ private:
 	struct McpTool {
 		std::string name;
 		std::string description;
-		std::vector<McpProperty> input_schema;
+		std::map<std::string, McpProperty> input_schema;
+		std::map<std::string, McpProperty> output_schema;
 		std::function <std::vector<McpContent>(const std::map<std::string, std::string>& args)> callback;
 	};
 	std::map<std::string, McpTool> m_tools;
 
 	static std::string GetPropertyType(PropertyType type);
+	static std::string GetPropertyValue(const McpTool& tool, McpPropertyValue type, bool escape);
 
 	std::map<std::string, long> m_sessions;
 
