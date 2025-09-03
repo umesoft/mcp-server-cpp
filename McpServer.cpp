@@ -245,7 +245,10 @@ void McpServer::cbEvHander(void* connection, int event_code, void* event_data)
 				mg_http_reply(
 					conn,
 					204,
-					"Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET\r\nAccess-Control-Allow-Headers: mcp-protocol-version\r\n",
+					"Access-Control-Allow-Origin: *\r\n"
+					"Access-Control-Allow-Methods: GET\r\n"
+					"Access-Control-Allow-Headers: mcp-protocol-version\r\n"
+					"Access-Control-Max-Age: 864000\r\n",
 					""
 				);
 			}
@@ -302,7 +305,7 @@ void McpServer::cbInitialize(void* rpc_req)
 	McpServer* self = (McpServer*)r->rpc->fn_data;
 	mg_json_rpc2_ok(r,
 		"{"
-			"\"protocolVersion\": \"2025-03-26\","
+			"\"protocolVersion\": \"2025-06-18\","
 			"\"capabilities\": {"
 				"\"logging\": {},"
 				"\"tools\": {}"
